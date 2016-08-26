@@ -197,17 +197,25 @@ class WC_Shipping_Estimate {
 
 	/** Plugin methods ***************************************/
 
-	protected function adjust_days($days, $exclude_weekends, array $exclude_dates, $order_cutoff_time) {
-		$now = new DateTime( null, new DateTimeZone( 'UTC' ) );
-
-		// Check if a cutoff time was specified for the shipping method
-		if( !empty( $order_cutoff_time ) ) {
-			// If we are past the cutoff time, add one more day to the delivery
-			if( $now->format('H:i') > $order_cutoff_time) {
-				$days++;
-			}
+	/**
+	 * Adjusts the delivery days by taking into account weekends excluded dates.
+	 *
+	 * @param int days The amount of days to adjust.
+	 * @param bool exclude_weekends Indicates if weekends should be excluded from
+	 * the delivery.
+	 * @return int The adjusted amount of days.
+	 * @author Aelia <support@aelia.co>
+	 */
+	protected function adjust_days_for_weekends($days, $exclude_weekends) {
+		if( !$exclude_weekends ) {
+			return $days;
 		}
 
+		// Working days will be verified using date format = N. Week days go from
+		// Monday (1) to Sunday (7)
+		$weekend_days = array( 6, 7 );
+
+		$now = new DateTime( null, new DateTimeZone( 'UTC' ) );
 		// "To" is the estimated delivery date, calculated as the amount of days
 		// from today
     $to = new DateTime( null, new DateTimeZone( 'UTC' ) );
@@ -218,31 +226,86 @@ class WC_Shipping_Estimate {
     $interval = new DateInterval('P1D');
     $shipping_days = new DatePeriod($now, $interval, $to);
 
-		// Working days will be verified using date format = N. Week days go from
-		// Monday (1) to Sunday (7)
-		$working_days = array( 1, 2, 3, 4, 5 );
-
     $extra_days = 0;
     foreach ( $shipping_days as $shipping_day ) {
 			// If weekends are excluded, we need to add one more day for each weekend
 			// day in the period
-			if( $exclude_weekends && ( in_array( $shipping_day->format( 'N' ), $working_days ) ) ) {
+			if( in_array( $shipping_day->format( 'N' ), $weekend_days ) ) {
 				$extra_days++;
 			}
-
-			// If the list of excluded dates is not empty, we must add one day for each
-			// of the dates that fall in the period and have been excluded
-			if( !empty( $exclude_dates) ) {
-				if( in_array( $shipping_day->format('Y-m-d'), $exclude_dates ) ||
-					  in_array( $shipping_day->format('*-m-d'), $exclude_dates ) ) {
-					$extra_days++;
-				}
-			}
     }
-
-    return $days + $extra_days;
+		return $days + $extra_days;
 	}
 
+	/**
+	 * Adjusts the delivery days by taking into account exclueded dates.
+	 *
+	 * @param int days The amount of days to adjust.
+	 * @param array exclude_dates An array of excluded dates.
+	 * @return int The adjusted amount of days.
+	 * @author Aelia <support@aelia.co>
+	 */
+	protected function adjust_days_for_excluded_dates( $days, array $exclude_dates ) {
+		if( empty( $exclude_dates ) ) {
+			return $days;
+		}
+
+		$now = new DateTime( null, new DateTimeZone( 'UTC' ) );
+		// "To" is the estimated delivery date, calculated as the amount of days
+		// from today
+    $to = new DateTime( null, new DateTimeZone( 'UTC' ) );
+    $to->add(new DateInterval('P' . (string)$days . 'D'));
+
+		// Interval will allow to break the period FROM/TO into a set of days. Each
+		// day will be checked to determine if it's excluded from the delivery
+    $interval = new DateInterval('P1D');
+    $shipping_days = new DatePeriod($now, $interval, $to);
+
+    $extra_days = 0;
+    foreach ( $shipping_days as $shipping_day ) {
+			// We must add one day for each of the dates that fall in the period and
+			// have been excluded
+			if( in_array( $shipping_day->format('Y-m-d'), $exclude_dates ) ||
+					in_array( $shipping_day->format('*-m-d'), $exclude_dates ) ) {
+				$extra_days++;
+			}
+    }
+		return $days + $extra_days;
+	}
+
+	/**
+	 * Adjusts the delivery days by taking into account cutoff time, weekends and
+	 * excluded dates.
+	 *
+	 * @param int days The amount of days to adjust.
+	 * @param bool exclude_weekends Indicates if weekends should be excluded from
+	 * the delivery.
+	 * @param array exclude_dates An array of excluded dates.
+	 * @param string order_cutoff_time The cutoff time by which an order must be
+	 * placed to be shipped the same day.
+	 * @return int The adjusted amount of days.
+	 * @author Aelia <support@aelia.co>
+	 */
+	protected function adjust_days($days, $exclude_weekends, array $exclude_dates, $order_cutoff_time) {
+		$now = new DateTime( null, new DateTimeZone( 'UTC' ) );
+
+		// Check if a cutoff time was specified for the shipping method
+		if( !empty( $order_cutoff_time ) ) {
+			// If we are past the cutoff time, add one more day to the delivery, as
+			// order will be processed the next day
+			if( $now->format('H:i') > $order_cutoff_time) {
+				$days++;
+			}
+		}
+
+		// Adjust the delivery days taking into account weekends
+		$days = $this->adjust_days_for_weekends( $days, $exclude_weekends );
+
+		// Adjust the delivery days taking into account excluded dates
+		$days = $this->adjust_days_for_excluded_dates( $days, $exclude_dates );
+
+    return $days;
+	}
 
 	/**
 	 * Displays the updated shipping method label
@@ -262,7 +325,7 @@ class WC_Shipping_Estimate {
 		$method_estimate_from = get_option( 'wc_shipping_method_estimate_from', array() );
 		$method_estimate_to = get_option( 'wc_shipping_method_estimate_to', array() );
 		/* Get the new exclusion options from the database.
-		 * @author Aelia
+		 * @author Aelia <support@aelia.co>
 		 */
 		$method_exclude_weekends = get_option( 'wc_shipping_method_exclude_weekends', array() );
 		$method_exclude_dates = get_option( 'wc_shipping_method_exclude_dates', array() );
@@ -277,9 +340,10 @@ class WC_Shipping_Estimate {
 			return $label;
 		}
 
-		/* Recalculate the amount of days required for delivery, based on the exclusion
-		 * settings.
-		 * @author Aelia
+		/* Recalculate the amount of days required for delivery, based on the
+		 * exclusion settings.
+		 *
+		 * @author Aelia <support@aelia.co>
 		 */
 
 		// Determine if weekends should be excluded
@@ -288,7 +352,9 @@ class WC_Shipping_Estimate {
 		$order_cutoff_time = !empty( $method_order_cutoff_time[ $method_id ] ) ? $method_order_cutoff_time[ $method_id ] : '';
 
 		/* Adjust the delivery days, taking into account exclusions and cutoff times.
-		 * @author Aelia
+		 * By doing so, we can leave the actual rendering logic unaltered.
+		 *
+		 * @author Aelia <support@aelia.co>
 		 */
 		$days_from_setting = $this->adjust_days( $days_from_setting, $exclude_weekends, $exclude_dates, $order_cutoff_time );
 		$days_to_setting = $this->adjust_days( $days_to_setting, $exclude_weekends, $exclude_dates, $order_cutoff_time );
@@ -463,7 +529,10 @@ class WC_Shipping_Estimate {
 		// Get the estimates if they're saved already
 		$method_estimate_from = get_option( 'wc_shipping_method_estimate_from', array() );
 		$method_estimate_to = get_option( 'wc_shipping_method_estimate_to', array() );
-		// Aelia
+		/* Load the exclusion settings.
+		 *
+		 * @author Aelia <support@aelia.co>
+		 */
 		$method_exclude_weekends = get_option( 'wc_shipping_method_exclude_weekends', array() );
 		$method_exclude_dates = get_option( 'wc_shipping_method_exclude_dates', array() );
 		$method_order_cutoff_time = get_option( 'wc_shipping_method_order_cutoff_time', array() );
@@ -498,10 +567,10 @@ class WC_Shipping_Estimate {
 							<th class="type"><?php esc_html_e( 'Type', 'woocommerce-shipping-estimate' ); ?></th>
 							<th class="day-from"><?php esc_html_e( 'From (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The earliest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 							<th class="day-to"><?php esc_html_e( 'To (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The latest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
-							<!-- Aelia -->
+							<!-- Aelia - Render the exclusion settings -->
 							<th class="exclude-weekends"><?php esc_html_e( 'Exclude weekends', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on weekends tick this box. It will exclude all Saturdays and Sundays from the delivery estimate calculation. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
-							<th class="exclude-dates"><?php esc_html_e( 'Exclude dates', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on other specific dates, such as holidays, list them here. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
-							<th class="order-cutoff-time"><?php esc_html_e( 'Order cutoff time', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier has a cutoff time for prosessing orders include that here. If it is before this time, delivery estimates will include the current (non-excluded) day. Timezone is UTC. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="exclude-dates"><?php esc_html_e( 'Exclude dates', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on other specific dates, such as holidays, list them here in YYYY-MM-DD format. It will exclude these dates from the delivery estimate calculation. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="order-cutoff-time"><?php esc_html_e( 'Order cutoff time', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier has a cutoff time for processing orders put that here. If it is after this time, delivery estimates will exclude the current day. Timezone is UTC. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -519,13 +588,13 @@ class WC_Shipping_Estimate {
 							<td class="day-to">
 								<input type="number" step="1" min="0" name="method_estimate_to[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_estimate_to[ $instance_id ] ) ? $method_estimate_to[ $instance_id ] : ''; ?>" />
 							</td>
-							<!-- Aelia -->
+							<!-- Aelia - Render the exclusion settings -->
 							<td class="exclude-weekends">
 								<input type="hidden" value="0" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" />
 								<input type="checkbox" value="1" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" <?php echo !empty( $method_exclude_weekends[ $instance_id ] ) ? 'checked="checked"' : ''; ?>" />
 							</td>
 							<td class="exclude-dates">
-								<textarea rows="1" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]"><?php
+								<textarea rows="1" cols="11" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]"><?php
 									if( isset( $method_exclude_dates[ $instance_id ] ) ) {
 										echo $method_exclude_dates[ $instance_id ];
 									}
@@ -557,10 +626,10 @@ class WC_Shipping_Estimate {
 							<th class="type"><?php esc_html_e( 'Type', 'woocommerce-shipping-estimate' ); ?></th>
 							<th class="day-from"><?php esc_html_e( 'From (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The earliest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 							<th class="day-to"><?php esc_html_e( 'To (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The latest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
-							<!-- Aelia -->
+							<!-- Aelia - Render the exclusion settings -->
 							<th class="exclude-weekends"><?php esc_html_e( 'Exclude weekends', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on weekends tick this box. It will exclude all Saturdays and Sundays from the delivery estimate calculation. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
-							<th class="exclude-dates"><?php esc_html_e( 'Exclude dates', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on other specific dates, such as holidays, list them here. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
-							<th class="order-cutoff-time"><?php esc_html_e( 'Order cutoff time', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier has a cutoff time for prosessing orders include that here. If it is before this time, delivery estimates will include the current (non-excluded) day. Timezone is UTC. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="exclude-dates"><?php esc_html_e( 'Exclude dates', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on other specific dates, such as holidays, list them here in YYYY-MM-DD format. It will exclude these dates from the delivery estimate calculation. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="order-cutoff-time"><?php esc_html_e( 'Order cutoff time', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier has a cutoff time for processing orders put that here. If it is after this time, delivery estimates will exclude the current day. Timezone is UTC. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -578,13 +647,17 @@ class WC_Shipping_Estimate {
 							<td class="day-to">
 								<input type="number" step="1" min="0" name="method_estimate_to[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_estimate_to[ $instance_id ] ) ? $method_estimate_to[ $instance_id ] : ''; ?>" />
 							</td>
-							<!-- Aelia -->
+							<!-- Aelia - Render the exclusion settings -->
 							<td class="exclude-weekends">
 								<input type="hidden" value="0" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" />
 								<input type="checkbox" value="1" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" <?php echo !empty( $method_exclude_weekends[ $instance_id ] ) ? 'checked="checked"' : ''; ?>" />
 							</td>
 							<td class="exclude-dates">
-								<input type="text" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_exclude_dates[ $instance_id ] ) ? $method_exclude_dates[ $instance_id ] : ''; ?>" />
+								<textarea rows="1" cols="11" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]"><?php
+									if( isset( $method_exclude_dates[ $instance_id ] ) ) {
+										echo $method_exclude_dates[ $instance_id ];
+									}
+								?></textarea>
 							</td>
 							<td class="order-cutoff-time">
 								<input type="time" name="method_order_cutoff_time[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_order_cutoff_time[ $instance_id ] ) ? $method_order_cutoff_time[ $instance_id ] : ''; ?>" />
@@ -642,10 +715,25 @@ class WC_Shipping_Estimate {
 		<?php
 			$assets_path = plugins_url('assets', __FILE__);
 		?>
-		<!-- jQuery Date Picker -->
+		<!-- Styles to accommodate the exclusion parameters in the UI -->
 		<style type="text/css">
+			.woocommerce table.form-table table.widefat .day-from input,
+			.woocommerce table.form-table table.widefat .day-to input {
+				width: 8em;
+			}
+
+			.woocommerce table.form-table table.widefat th,
+			.woocommerce table.form-table table.widefat td {
+				width: auto;
+			}
+
+			.woocommerce table.form-table table.widefat .exclude-dates {
+				width: 10em;
+				position: relative;
+			}
+
 			.exclude-dates textarea {
-				width: 80%;
+				width: 70%;
 				resize: none;
 				overflow: hidden;
 				min-height: 28px;
@@ -660,6 +748,7 @@ class WC_Shipping_Estimate {
 				height: 28px;
 			}
 		</style>
+		<!-- jQuery Date Picker -->
 		<link rel="stylesheet" type="text/css" href="<?php echo $assets_path; ?>/css/redmond.datepick.css">
 		<script type="text/javascript" src="<?php echo $assets_path; ?>/js/jquery.plugin.min.js"></script>
 		<script type="text/javascript" src="<?php echo $assets_path; ?>/js/jquery.datepick.min.js"></script>
@@ -701,7 +790,7 @@ class WC_Shipping_Estimate {
 	 *
 	 * @param array dates The dates to validate.
 	 * @return array An array of valid dates.
-	 * @author Aelia
+	 * @author Aelia <support@aelia.co>
 	 */
 	protected function validate_dates(array $dates) {
 		$today = new DateTime();
