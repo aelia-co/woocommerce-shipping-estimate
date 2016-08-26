@@ -215,7 +215,9 @@ class WC_Shipping_Estimate {
 
 		$method_estimate_from = get_option( 'wc_shipping_method_estimate_from', array() );
 		$method_estimate_to = get_option( 'wc_shipping_method_estimate_to', array() );
-		// Aelia
+		/* Get the new exclusion options from the database.
+		 * @author Aelia
+		 */
 		$method_exclude_weekends = get_option( 'wc_shipping_method_exclude_weekends', array() );
 		$method_exclude_dates = get_option( 'wc_shipping_method_exclude_dates', array() );
 		$method_order_cutoff_time = get_option( 'wc_shipping_method_order_cutoff_time', array() );
@@ -404,6 +406,9 @@ class WC_Shipping_Estimate {
 		$method_exclude_dates = get_option( 'wc_shipping_method_exclude_dates', array() );
 		$method_order_cutoff_time = get_option( 'wc_shipping_method_order_cutoff_time', array() );
 
+		// Debug
+		//var_dump($method_exclude_dates);
+
 		?>
 		<tr valign="top">
 			<th scope="row" class="titledesc"><?php esc_html_e( 'Estimate Ranges', 'woocommerce-shipping-estimate' ) ?></th>
@@ -456,7 +461,11 @@ class WC_Shipping_Estimate {
 								<input type="checkbox" value="1" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" <?php echo !empty( $method_exclude_weekends[ $instance_id ] ) ? 'checked="checked"' : ''; ?>" />
 							</td>
 							<td class="exclude-dates">
-								<textarea rows="1" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_exclude_dates[ $instance_id ] ) ? $method_exclude_dates[ $instance_id ] : ''; ?>"></textarea>
+								<textarea rows="1" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]"><?php
+									if( isset( $method_exclude_dates[ $instance_id ] ) ) {
+										echo $method_exclude_dates[ $instance_id ];
+									}
+								?></textarea>
 							</td>
 							<td class="order-cutoff-time">
 								<input type="time" name="method_order_cutoff_time[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_order_cutoff_time[ $instance_id ] ) ? $method_order_cutoff_time[ $instance_id ] : ''; ?>" />
@@ -589,10 +598,11 @@ class WC_Shipping_Estimate {
 				padding: 3px 5px;
 				vertical-align: middle;
 			}
-			
-			.exclude-dates button {
-				margin-left: 4px;
+
+			.exclude-dates .calendar_trigger {
+				margin: 1px 0 0 4px;
 				vertical-align: top;
+				height: 28px;
 			}
 		</style>
 		<link rel="stylesheet" type="text/css" href="<?php echo $assets_path; ?>/css/redmond.datepick.css">
@@ -600,25 +610,68 @@ class WC_Shipping_Estimate {
 		<script type="text/javascript" src="<?php echo $assets_path; ?>/js/jquery.datepick.min.js"></script>
 		<script type="text/javascript">
 			jQuery(document).ready(function($) {
-				$('.exclude-dates textarea').on('change, keyup', function(){
-					var $elem = $(this);
-
+				function resize_textarea($elem) {
 					$elem.css('height', '5px');
 					$elem.css('height', $elem.prop('scrollHeight') + 'px');
+				}
+
+				$('.exclude-dates textarea').on('change, keyup', function(){
+					resize_textarea($(this));
+				}).each(function() {
+					resize_textarea($(this));
 				});
 
 				$('.exclude-dates textarea').datepick({
 					dateFormat: 'yyyy-mm-dd',
+					constrainInput: false,
 					showOnFocus: false,
 					multiSelect: 999,
 					multiSeparator: "\n",
 					monthsToShow: 2,
-					showTrigger: '<button type="button" class="trigger">...</button>'
+					showTrigger: '<button type="button" class="calendar_trigger">...</button>'
 				});
 
 			});
 		</script>
 		<?php
+	}
+
+	/**
+	 * Validates a list of dates. This method considers the following date formats
+	 * as valid:
+	 * - yyyy-mm-dd
+	 * - *-mm-dd
+	 *
+	 * Dates in any other format are be discarded.
+	 *
+	 * @param array dates The dates to validate.
+	 * @return array An array of valid dates.
+	 * @author Aelia
+	 */
+	protected function validate_dates(array $dates) {
+		$today = new DateTime();
+		$current_year = $today->format('Y');
+
+		// Remove all blank spaces and empty lines
+		$dates = array_filter(array_map('trim', $dates));
+
+		foreach($dates as $idx => $date) {
+			// Replace the year wildcard with current year. This will make it easier
+			// to validate the date
+			if(strpos($date, '*') !== false) {
+				// Remove duplicate asterisks, if found
+				$date = preg_replace('/\*{2,}/', '*', $date);
+				$date = str_replace('*', $current_year, $date);
+			}
+
+			// Try to create a date object from the date string. If the date is invalid,
+			// that operation will fail and we can remove the date from the list
+			if(DateTime::createFromFormat('Y-m-d', $date) === false) {
+				unset($dates[$idx]);
+			}
+		}
+
+		return $dates;
 	}
 
 
@@ -671,15 +724,19 @@ class WC_Shipping_Estimate {
 		// Aelia
 		$method_exclude_weekends = !empty( $_POST['method_exclude_weekends'] ) ? $_POST['method_exclude_weekends'] : array();
 		$method_exclude_dates = !empty( $_POST['method_exclude_dates'] ) ? $_POST['method_exclude_dates'] : array();
-		foreach($method_exclude_dates as $method_id => $excluded_date) {
-			// TODO Validate dates
+		foreach($method_exclude_dates as $method_id => $excluded_dates) {
+			// The excluded dates are POSTed as a long string. We explode it into an
+			// array to process them more easily
+			$excluded_dates = explode("\n", $excluded_dates);
+			// After validating and filtering the dates, we can convert them back into
+			// a string before saving them to the database
+			$method_exclude_dates[$method_id] = implode("\n", $this->validate_dates($excluded_dates));
 		}
 
 		$method_order_cutoff_time = !empty( $_POST['method_order_cutoff_time'] ) ? $_POST['method_order_cutoff_time'] : array();
 		foreach($method_order_cutoff_time as $method_id => $cutoff_time) {
 			// TODO Validate cutoff times
 		}
-
 
 		update_option( 'wc_shipping_method_exclude_weekends', $method_exclude_weekends );
 		update_option( 'wc_shipping_method_exclude_dates', $method_exclude_dates );
