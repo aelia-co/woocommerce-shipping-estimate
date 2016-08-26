@@ -200,77 +200,122 @@ class WC_Shipping_Estimate {
 	/**
 	 * Adjusts the delivery days by taking into account weekends excluded dates.
 	 *
+	 * @param DateTime now The date of reference for the calculation.
 	 * @param int days The amount of days to adjust.
 	 * @param bool exclude_weekends Indicates if weekends should be excluded from
 	 * the delivery.
+	 * @param array excluded_days A list of days that were excluded from the shipping.
+	 * It will be used as a cross-reference for the excluded dates, to avoid
+	 * counting the same excluded day twice.
 	 * @return int The adjusted amount of days.
 	 * @author Aelia <support@aelia.co>
 	 */
-	protected function adjust_days_for_weekends($days, $exclude_weekends) {
+	protected function adjust_days_for_weekends( DateTime $now, $days, $exclude_weekends, &$excluded_days = array() ) {
 		if( !$exclude_weekends ) {
 			return $days;
 		}
+
+		// "To" is the estimated delivery date, calculated as the amount of days
+		// from today
+    $to = clone $now;
+    $to->modify('+' . (string)$days . ' days');
+		// We need to add one more day to the target date, because the DatePeriod
+		// function always excludes the end date
+		$to->modify('+1 day');
+
+		// Interval will allow to break the period FROM/TO into a set of days. Each
+		// day will be checked to determine if it's excluded from the delivery
+    $interval = new DateInterval('P1D');
+    $shipping_days = new DatePeriod($now, $interval, $to);
 
 		// Working days will be verified using date format = N. Week days go from
 		// Monday (1) to Sunday (7)
 		$weekend_days = array( 6, 7 );
 
-		$now = new DateTime( null, new DateTimeZone( 'UTC' ) );
-		// "To" is the estimated delivery date, calculated as the amount of days
-		// from today
-    $to = new DateTime( null, new DateTimeZone( 'UTC' ) );
-    $to->add(new DateInterval('P' . (string)$days . 'D'));
-
-		// Interval will allow to break the period FROM/TO into a set of days. Each
-		// day will be checked to determine if it's excluded from the delivery
-    $interval = new DateInterval('P1D');
-    $shipping_days = new DatePeriod($now, $interval, $to);
-
-    $extra_days = 0;
     foreach ( $shipping_days as $shipping_day ) {
+			// If the day was already excluded before, don't count it again
+			if( in_array( $shipping_day->format('Y-m-d'), $excluded_days ) ) {
+				continue;
+			}
+
 			// If weekends are excluded, we need to add one more day for each weekend
 			// day in the period
 			if( in_array( $shipping_day->format( 'N' ), $weekend_days ) ) {
-				$extra_days++;
+				// Keep track of the fact that we excluded this day from shipping
+				$excluded_days[] = $shipping_day->format( 'Y-m-d' );
+				$days++;
+
+				// Now that we added one more day to the delivery, this might "push" the
+				// estimated delivery date into a further day of the weekend, which
+				// should also be excluded. To ensure that, we make a recursive call,
+				// keeping track of the days we already eliminated, so that we can keep
+				// adding days until we get a delivery date that is outside of the
+				// "excluded range"
+				$days = $this->adjust_days_for_weekends( $now, $days, $exclude_weekends, $excluded_days );
 			}
     }
-		return $days + $extra_days;
+
+		return $days;
 	}
 
 	/**
-	 * Adjusts the delivery days by taking into account exclueded dates.
+	 * Adjusts the delivery days by taking into account excluded dates.
 	 *
+	 * @param DateTime now The date of reference for the calculation.
 	 * @param int days The amount of days to adjust.
 	 * @param array exclude_dates An array of excluded dates.
+	 * @param array excluded_days A list of days that were excluded from the shipping.
+	 * It will be used as a cross-reference for the excluded dates, to avoid
+	 * counting the same excluded day twice.
 	 * @return int The adjusted amount of days.
 	 * @author Aelia <support@aelia.co>
 	 */
-	protected function adjust_days_for_excluded_dates( $days, array $exclude_dates ) {
+	protected function adjust_days_for_excluded_dates( $now, $days, array $exclude_dates, &$excluded_days = array() ) {
 		if( empty( $exclude_dates ) ) {
 			return $days;
 		}
 
-		$now = new DateTime( null, new DateTimeZone( 'UTC' ) );
 		// "To" is the estimated delivery date, calculated as the amount of days
 		// from today
-    $to = new DateTime( null, new DateTimeZone( 'UTC' ) );
-    $to->add(new DateInterval('P' . (string)$days . 'D'));
+    $to = clone $now;
+    $to->modify('+' . (string)$days . ' days');
+		// We need to add one more day to the target date, because the DatePeriod
+		// function always excludes the end date
+		$to->modify('+1 day');
 
 		// Interval will allow to break the period FROM/TO into a set of days. Each
 		// day will be checked to determine if it's excluded from the delivery
     $interval = new DateInterval('P1D');
-    $shipping_days = new DatePeriod($now, $interval, $to);
+		// The DatePeriod is created with a zero to ensure that the start date is included
+    $shipping_days = new DatePeriod($now, $interval, $to, 0);
 
-    $extra_days = 0;
     foreach ( $shipping_days as $shipping_day ) {
+			// If the day was already excluded before, don't count it again
+			if( in_array( $shipping_day->format('Y-m-d'), $excluded_days ) ) {
+				continue;
+			}
+
 			// We must add one day for each of the dates that fall in the period and
 			// have been excluded
 			if( in_array( $shipping_day->format('Y-m-d'), $exclude_dates ) ||
 					in_array( $shipping_day->format('*-m-d'), $exclude_dates ) ) {
-				$extra_days++;
+				// Keep track of the fact that we excluded this day from shipping
+				$excluded_days[] = $shipping_day->format( 'Y-m-d' );
+				$days++;
+
+				// Now that we added one more day to the delivery, this might "push" the
+				// estimated delivery date into another "excluded date" (e.g. we just
+				// excluded 25th December, and end up into the 26th December, which is
+				// also a holiday. To ensure that we exclude all needed dates, we make a
+				// recursive call, keeping track of the days we already eliminated,
+				// so that we can keep adding days until we get a delivery date that is
+				// outside of the "excluded range"
+				$days = $this->adjust_days_for_excluded_dates( $now, $days, $exclude_dates, $excluded_days );
+
 			}
     }
-		return $days + $extra_days;
+
+		return $days;
 	}
 
 	/**
@@ -291,18 +336,25 @@ class WC_Shipping_Estimate {
 
 		// Check if a cutoff time was specified for the shipping method
 		if( !empty( $order_cutoff_time ) ) {
-			// If we are past the cutoff time, add one more day to the delivery, as
-			// order will be processed the next day
-			if( $now->format('H:i') > $order_cutoff_time) {
-				$days++;
+			// If we are within the cutoff time, today will count towards the delivery
+			// days, so we can decrease the total by 1
+			if( $now->format('H:i') <= $order_cutoff_time) {
+				$days--;
+
+				// We can't have a negative amount of delivery days, at least until time
+				// travel is invented
+				if( $days < 0 ) {
+					$days = 0;
+				}
 			}
 		}
 
+		$already_excluded_days = array();
 		// Adjust the delivery days taking into account weekends
-		$days = $this->adjust_days_for_weekends( $days, $exclude_weekends );
+		$days = $this->adjust_days_for_weekends( $now, $days, $exclude_weekends, $already_excluded_days );
 
 		// Adjust the delivery days taking into account excluded dates
-		$days = $this->adjust_days_for_excluded_dates( $days, $exclude_dates );
+		$days = $this->adjust_days_for_excluded_dates( $now, $days, $exclude_dates, $already_excluded_days );
 
     return $days;
 	}
@@ -433,6 +485,7 @@ class WC_Shipping_Estimate {
 	 * @return string $label the updated label with the delivery dates
 	 */
 	private function generate_delivery_estimate_dates( $days_from_setting, $days_to_setting, $label ) {
+
 
 		// Filter the "dates" value so it can be changed
 		$days_from = apply_filters( 'wc_shipping_estimate_dates_from', date_i18n( 'F j', strtotime( $days_from_setting . 'days' ) )  );
