@@ -197,6 +197,52 @@ class WC_Shipping_Estimate {
 
 	/** Plugin methods ***************************************/
 
+	protected function adjust_days($days, $exclude_weekends, array $exclude_dates, $order_cutoff_time) {
+		$now = new DateTime( null, new DateTimeZone( 'UTC' ) );
+
+		// Check if a cutoff time was specified for the shipping method
+		if( !empty( $order_cutoff_time ) ) {
+			// If we are past the cutoff time, add one more day to the delivery
+			if( $now->format('H:i') > $order_cutoff_time) {
+				$days++;
+			}
+		}
+
+		// "To" is the estimated delivery date, calculated as the amount of days
+		// from today
+    $to = new DateTime( null, new DateTimeZone( 'UTC' ) );
+    $to->add(new DateInterval('P' . (string)$days . 'D'));
+
+		// Interval will allow to break the period FROM/TO into a set of days. Each
+		// day will be checked to determine if it's excluded from the delivery
+    $interval = new DateInterval('P1D');
+    $shipping_days = new DatePeriod($now, $interval, $to);
+
+		// Working days will be verified using date format = N. Week days go from
+		// Monday (1) to Sunday (7)
+		$working_days = array( 1, 2, 3, 4, 5 );
+
+    $extra_days = 0;
+    foreach ( $shipping_days as $shipping_day ) {
+			// If weekends are excluded, we need to add one more day for each weekend
+			// day in the period
+			if( $exclude_weekends && ( in_array( $shipping_day->format( 'N' ), $working_days ) ) ) {
+				$extra_days++;
+			}
+
+			// If the list of excluded dates is not empty, we must add one day for each
+			// of the dates that fall in the period and have been excluded
+			if( !empty( $exclude_dates) ) {
+				if( in_array( $shipping_day->format('Y-m-d'), $exclude_dates ) ||
+					  in_array( $shipping_day->format('*-m-d'), $exclude_dates ) ) {
+					$extra_days++;
+				}
+			}
+    }
+
+    return $days + $extra_days;
+	}
+
 
 	/**
 	 * Displays the updated shipping method label
@@ -230,6 +276,22 @@ class WC_Shipping_Estimate {
 		if ( ! $days_from_setting && ! $days_to_setting ) {
 			return $label;
 		}
+
+		/* Recalculate the amount of days required for delivery, based on the exclusion
+		 * settings.
+		 * @author Aelia
+		 */
+
+		// Determine if weekends should be excluded
+		$exclude_weekends = !empty( $method_exclude_weekends[ $method_id ] );
+		$exclude_dates = !empty( $method_exclude_dates[ $method_id ] ) ? explode( "\n", $method_exclude_dates[ $method_id ] ) : array();
+		$order_cutoff_time = !empty( $method_order_cutoff_time[ $method_id ] ) ? $method_order_cutoff_time[ $method_id ] : '';
+
+		/* Adjust the delivery days, taking into account exclusions and cutoff times.
+		 * @author Aelia
+		 */
+		$days_from_setting = $this->adjust_days( $days_from_setting, $exclude_weekends, $exclude_dates, $order_cutoff_time );
+		$days_to_setting = $this->adjust_days( $days_to_setting, $exclude_weekends, $exclude_dates, $order_cutoff_time );
 
 		// build me a label!
 		$label .= '<br /><small>';
@@ -408,6 +470,8 @@ class WC_Shipping_Estimate {
 
 		// Debug
 		//var_dump($method_exclude_dates);
+		//var_dump($method_exclude_weekends);
+		//var_dump($method_order_cutoff_time);
 
 		?>
 		<tr valign="top">
@@ -580,15 +644,6 @@ class WC_Shipping_Estimate {
 		?>
 		<!-- jQuery Date Picker -->
 		<style type="text/css">
-			.woocommerce table.form-table table.widefat .day-from input,
-			.woocommerce table.form-table table.widefat .day-to input {
-				width: 8em;
-			}
-
-			.exclude-dates {
-				position: relative;
-			}
-
 			.exclude-dates textarea {
 				width: 80%;
 				resize: none;
