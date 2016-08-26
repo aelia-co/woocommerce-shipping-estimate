@@ -590,11 +590,6 @@ class WC_Shipping_Estimate {
 		$method_exclude_dates = get_option( 'wc_shipping_method_exclude_dates', array() );
 		$method_order_cutoff_time = get_option( 'wc_shipping_method_order_cutoff_time', array() );
 
-		// Debug
-		//var_dump($method_exclude_dates);
-		//var_dump($method_exclude_weekends);
-		//var_dump($method_order_cutoff_time);
-
 		?>
 		<tr valign="top">
 			<th scope="row" class="titledesc"><?php esc_html_e( 'Estimate Ranges', 'woocommerce-shipping-estimate' ) ?></th>
