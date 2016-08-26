@@ -124,8 +124,8 @@ class WC_Shipping_Estimate {
 		}
 		return self::$instance;
 	}
-	
-	
+
+
 	/**
 	 * Cloning instances is forbidden due to singleton pattern.
 	 *
@@ -135,8 +135,8 @@ class WC_Shipping_Estimate {
 		/* translators: Placeholders: %s - plugin name */
 		_doing_it_wrong( __FUNCTION__, sprintf( esc_html__( 'You cannot clone instances of %s.', 'woocommerce-shipping-estimate' ), 'WooCommerce Shipping Estimates' ), '2.0.0' );
 	}
-	
-	
+
+
 	/**
 	 * Unserializing instances is forbidden due to singleton pattern.
 	 *
@@ -174,8 +174,8 @@ class WC_Shipping_Estimate {
 		// localization
 		load_plugin_textdomain( 'woocommerce-shipping-estimate', false, dirname( plugin_basename( __FILE__ ) ) . '/i18n/languages' );
 	}
-	
-	
+
+
 	/**
 	 * Checks if WooCommerce is active
 	 *
@@ -183,13 +183,13 @@ class WC_Shipping_Estimate {
 	 * @return bool true if WooCommerce is active, false otherwise
 	 */
 	public static function is_woocommerce_active() {
-	
+
 		$active_plugins = (array) get_option( 'active_plugins', array() );
-		
+
 		if ( is_multisite() ) {
 			$active_plugins = array_merge( $active_plugins, get_site_option( 'active_sitewide_plugins', array() ) );
 		}
-		
+
 		return in_array( 'woocommerce/woocommerce.php', $active_plugins ) || array_key_exists( 'woocommerce/woocommerce.php', $active_plugins );
 	}
 
@@ -207,18 +207,23 @@ class WC_Shipping_Estimate {
 	 * @return string - the updated label
 	 */
 	public function render_estimate_label( $label, $method ) {
-	
+
 		// get the instance ID in case this is a zone method
 		$instance_id = (int) substr( $method->id, strpos( $method->id, ':' ) + 1 );
-		
+
 		$method_id = $instance_id ? (int) $instance_id : $method->method_id;
 
 		$method_estimate_from = get_option( 'wc_shipping_method_estimate_from', array() );
 		$method_estimate_to = get_option( 'wc_shipping_method_estimate_to', array() );
-		
+		// Aelia
+		$method_exclude_weekends = get_option( 'wc_shipping_method_exclude_weekends', array() );
+		$method_exclude_dates = get_option( 'wc_shipping_method_exclude_dates', array() );
+		$method_order_cutoff_time = get_option( 'wc_shipping_method_order_cutoff_time', array() );
+
+
 		$days_from_setting = isset( $method_estimate_from[ $method_id ] ) ? $method_estimate_from[ $method_id ] : 0;
 		$days_to_setting = isset( $method_estimate_to[ $method_id ] ) ? $method_estimate_to[ $method_id ]: 0;
-		
+
 		// bail if there are no changes to make to the label
 		if ( ! $days_from_setting && ! $days_to_setting ) {
 			return $label;
@@ -359,9 +364,9 @@ class WC_Shipping_Estimate {
 	public function add_format_selector( $settings ) {
 
 		$new_settings = array(
-		
+
 			array( 'title' => __( 'Shipping Estimates', 'woocommerce-shipping-estimate' ), 'type' => 'title', 'id' => 'wc_shipping_estimates' ),
-			
+
 			array(
 				'id'       => 'wc_shipping_estimate_format',
 				'type'     => 'radio',
@@ -374,7 +379,7 @@ class WC_Shipping_Estimate {
 				'desc'     => __( 'This changes the way estimates are shown to customers.', 'woocommerce-shipping-estimate' ),
 				'desc_tip' => true,
 			),
-			
+
 			array( 'type' => 'sectionend', 'id' => 'wc_shipping_estimates' ),
 		);
 
@@ -394,6 +399,10 @@ class WC_Shipping_Estimate {
 		// Get the estimates if they're saved already
 		$method_estimate_from = get_option( 'wc_shipping_method_estimate_from', array() );
 		$method_estimate_to = get_option( 'wc_shipping_method_estimate_to', array() );
+		// Aelia
+		$method_exclude_weekends = get_option( 'wc_shipping_method_exclude_weekends', array() );
+		$method_exclude_dates = get_option( 'wc_shipping_method_exclude_dates', array() );
+		$method_order_cutoff_time = get_option( 'wc_shipping_method_order_cutoff_time', array() );
 
 		?>
 		<tr valign="top">
@@ -403,14 +412,14 @@ class WC_Shipping_Estimate {
 				<?php $zones = WC_Shipping_Zones::get_zones(); ?>
 				<?php if ( ! empty( $zones ) ) : ?>
 				<?php foreach ( $zones as $zone_id => $zone_data ) : ?>
-					<?php 
-						$zone = WC_Shipping_Zones::get_zone( $zone_id ); 
-						$zone_methods = $zone->get_shipping_methods(); 
+					<?php
+						$zone = WC_Shipping_Zones::get_zone( $zone_id );
+						$zone_methods = $zone->get_shipping_methods();
 						if ( ! empty( $zone_methods ) ) :
 					?>
 					<thead>
 						<tr style="background: #e9e9e9;">
-							<th colspan="4" style="text-align: center; border: 1px solid #e1e1e1;">
+							<th colspan="7" style="text-align: center; border: 1px solid #e1e1e1;">
 								<?php echo sprintf( '<a href="%1$s">%2$s</a>', esc_url( admin_url( 'admin.php?page=wc-settings&tab=shipping&zone_id=' . $zone->get_id() ) ), $zone->get_zone_name() ); ?>
 								<?php esc_html_e( 'Methods', 'woocommerce-shipping-estimate' ); ?>
 							</th>
@@ -420,6 +429,10 @@ class WC_Shipping_Estimate {
 							<th class="type"><?php esc_html_e( 'Type', 'woocommerce-shipping-estimate' ); ?></th>
 							<th class="day-from"><?php esc_html_e( 'From (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The earliest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 							<th class="day-to"><?php esc_html_e( 'To (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The latest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<!-- Aelia -->
+							<th class="exclude-weekends"><?php esc_html_e( 'Exclude weekends', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on weekends tick this box. It will exclude all Saturdays and Sundays from the delivery estimate calculation. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="exclude-dates"><?php esc_html_e( 'Exclude dates', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on other specific dates, such as holidays, list them here. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="order-cutoff-time"><?php esc_html_e( 'Order cutoff time', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier has a cutoff time for prosessing orders include that here. If it is before this time, delivery estimates will include the current (non-excluded) day. Timezone is UTC. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -437,19 +450,30 @@ class WC_Shipping_Estimate {
 							<td class="day-to">
 								<input type="number" step="1" min="0" name="method_estimate_to[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_estimate_to[ $instance_id ] ) ? $method_estimate_to[ $instance_id ] : ''; ?>" />
 							</td>
+							<!-- Aelia -->
+							<td class="exclude-weekends">
+								<input type="hidden" value="0" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" />
+								<input type="checkbox" value="1" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" <?php echo !empty( $method_exclude_weekends[ $instance_id ] ) ? 'checked="checked"' : ''; ?>" />
+							</td>
+							<td class="exclude-dates">
+								<textarea rows="1" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_exclude_dates[ $instance_id ] ) ? $method_exclude_dates[ $instance_id ] : ''; ?>"></textarea>
+							</td>
+							<td class="order-cutoff-time">
+								<input type="time" name="method_order_cutoff_time[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_order_cutoff_time[ $instance_id ] ) ? $method_order_cutoff_time[ $instance_id ] : ''; ?>" />
+							</td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>
 					<?php endif; ?>
 				<?php endforeach; ?>
 				<?php endif; ?>
-				
+
 				<?php $world_zone =  WC_Shipping_Zones::get_zone( 0 ); ?>
 				<?php $world_zone_methods = $world_zone->get_shipping_methods(); ?>
 				<?php if ( ! empty( $world_zone_methods ) ) : ?>
 					<thead>
 						<tr style="background: #e9e9e9;">
-							<th colspan="4" style="text-align: center; border: 1px solid #e1e1e1;">
+							<th colspan="7" style="text-align: center; border: 1px solid #e1e1e1;">
 								<?php $zone_name = __( 'Rest of the World', 'woocommerce-shipping-estimate' ); ?>
 								<?php echo sprintf( '<a href="%1$s">%2$s</a>', esc_url( admin_url( 'admin.php?page=wc-settings&tab=shipping&zone_id=0' ) ), $zone_name ); ?>
 								<?php esc_html_e( 'Methods', 'woocommerce-shipping-estimate' ); ?>
@@ -460,6 +484,10 @@ class WC_Shipping_Estimate {
 							<th class="type"><?php esc_html_e( 'Type', 'woocommerce-shipping-estimate' ); ?></th>
 							<th class="day-from"><?php esc_html_e( 'From (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The earliest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 							<th class="day-to"><?php esc_html_e( 'To (days)', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'The latest estimated arrival. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<!-- Aelia -->
+							<th class="exclude-weekends"><?php esc_html_e( 'Exclude weekends', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on weekends tick this box. It will exclude all Saturdays and Sundays from the delivery estimate calculation. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="exclude-dates"><?php esc_html_e( 'Exclude dates', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier does not deliver on other specific dates, such as holidays, list them here. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
+							<th class="order-cutoff-time"><?php esc_html_e( 'Order cutoff time', 'woocommerce-shipping-estimate' ); ?> <?php echo wc_help_tip( __( 'If your courier has a cutoff time for prosessing orders include that here. If it is before this time, delivery estimates will include the current (non-excluded) day. Timezone is UTC. Can be left blank.', 'woocommerce-shipping-estimate' ) ); ?></th>
 						</tr>
 					</thead>
 					<tbody>
@@ -477,12 +505,23 @@ class WC_Shipping_Estimate {
 							<td class="day-to">
 								<input type="number" step="1" min="0" name="method_estimate_to[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_estimate_to[ $instance_id ] ) ? $method_estimate_to[ $instance_id ] : ''; ?>" />
 							</td>
+							<!-- Aelia -->
+							<td class="exclude-weekends">
+								<input type="hidden" value="0" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" />
+								<input type="checkbox" value="1" name="method_exclude_weekends[<?php echo esc_attr( $instance_id ); ?>]" <?php echo !empty( $method_exclude_weekends[ $instance_id ] ) ? 'checked="checked"' : ''; ?>" />
+							</td>
+							<td class="exclude-dates">
+								<input type="text" name="method_exclude_dates[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_exclude_dates[ $instance_id ] ) ? $method_exclude_dates[ $instance_id ] : ''; ?>" />
+							</td>
+							<td class="order-cutoff-time">
+								<input type="time" name="method_order_cutoff_time[<?php echo esc_attr( $instance_id ); ?>]" value="<?php echo isset( $method_order_cutoff_time[ $instance_id ] ) ? $method_order_cutoff_time[ $instance_id ] : ''; ?>" />
+							</td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>
 					<?php endif; ?>
-					<?php 
-						$methods = WC()->shipping->get_shipping_methods(); 
+					<?php
+						$methods = WC()->shipping->get_shipping_methods();
 						unset( $methods['flat_rate'], $methods['free_shipping'], $methods['local_pickup'] );
 						if ( ! empty( $methods ) ) :
 					?>
@@ -526,6 +565,59 @@ class WC_Shipping_Estimate {
 				</table>
 			</td>
 		</tr>
+
+		<?php
+			$assets_path = plugins_url('assets', __FILE__);
+		?>
+		<!-- jQuery Date Picker -->
+		<style type="text/css">
+			.woocommerce table.form-table table.widefat .day-from input,
+			.woocommerce table.form-table table.widefat .day-to input {
+				width: 8em;
+			}
+
+			.exclude-dates {
+				position: relative;
+			}
+
+			.exclude-dates textarea {
+				width: 80%;
+				resize: none;
+				overflow: hidden;
+				min-height: 28px;
+				max-height: 5em;
+				padding: 3px 5px;
+				vertical-align: middle;
+			}
+			
+			.exclude-dates button {
+				margin-left: 4px;
+				vertical-align: top;
+			}
+		</style>
+		<link rel="stylesheet" type="text/css" href="<?php echo $assets_path; ?>/css/redmond.datepick.css">
+		<script type="text/javascript" src="<?php echo $assets_path; ?>/js/jquery.plugin.min.js"></script>
+		<script type="text/javascript" src="<?php echo $assets_path; ?>/js/jquery.datepick.min.js"></script>
+		<script type="text/javascript">
+			jQuery(document).ready(function($) {
+				$('.exclude-dates textarea').on('change, keyup', function(){
+					var $elem = $(this);
+
+					$elem.css('height', '5px');
+					$elem.css('height', $elem.prop('scrollHeight') + 'px');
+				});
+
+				$('.exclude-dates textarea').datepick({
+					dateFormat: 'yyyy-mm-dd',
+					showOnFocus: false,
+					multiSelect: 999,
+					multiSeparator: "\n",
+					monthsToShow: 2,
+					showTrigger: '<button type="button" class="trigger">...</button>'
+				});
+
+			});
+		</script>
 		<?php
 	}
 
@@ -546,6 +638,7 @@ class WC_Shipping_Estimate {
 
 		$estimate_from = isset( $_POST['method_estimate_from'] ) ? $_POST['method_estimate_from'] : '';
 		$estimate_to   = isset( $_POST['method_estimate_to'] ) ? $_POST['method_estimate_to'] : '';
+
 
 		$method_estimate_from = array();
 		$method_estimate_to   = array();
@@ -574,6 +667,23 @@ class WC_Shipping_Estimate {
 
 		update_option( 'wc_shipping_method_estimate_from', $method_estimate_from );
 		update_option( 'wc_shipping_method_estimate_to', $method_estimate_to );
+
+		// Aelia
+		$method_exclude_weekends = !empty( $_POST['method_exclude_weekends'] ) ? $_POST['method_exclude_weekends'] : array();
+		$method_exclude_dates = !empty( $_POST['method_exclude_dates'] ) ? $_POST['method_exclude_dates'] : array();
+		foreach($method_exclude_dates as $method_id => $excluded_date) {
+			// TODO Validate dates
+		}
+
+		$method_order_cutoff_time = !empty( $_POST['method_order_cutoff_time'] ) ? $_POST['method_order_cutoff_time'] : array();
+		foreach($method_order_cutoff_time as $method_id => $cutoff_time) {
+			// TODO Validate cutoff times
+		}
+
+
+		update_option( 'wc_shipping_method_exclude_weekends', $method_exclude_weekends );
+		update_option( 'wc_shipping_method_exclude_dates', $method_exclude_dates );
+		update_option( 'wc_shipping_method_order_cutoff_time', $method_order_cutoff_time );
 	}
 
 
@@ -609,7 +719,7 @@ class WC_Shipping_Estimate {
 	 * @param int $installed_version the currently installed version of the plugin
 	 */
 	private function upgrade( $version ) {
-	
+
 		if ( -1 === version_compare( $version, '2.0.0' ) ) {
 			// any version 2.0 upgrade methods
 		}
